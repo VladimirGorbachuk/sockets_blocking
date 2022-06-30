@@ -28,8 +28,9 @@ class Server():
             logger.debug("[LISTENING] Server is listening on %s", self.settings.SERVER_ADDRESS)
             while True:
                 conn, addr = self.server.accept()
+                logger.info('listening to a new client')
                 worker = Worker(conn, settings=self.settings)
-                self.workers_pool.apply(func=self.default_handler, args=(worker,), kwds={'settings': self.settings})
+                self.workers_pool.apply_async(func=self.default_handler, args=(worker,), kwds={'settings': self.settings})
         except Exception as e:
             logger.exception('an unexpected ServerError has occured %s', e)
         finally:

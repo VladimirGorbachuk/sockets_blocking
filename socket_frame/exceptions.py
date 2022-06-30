@@ -1,3 +1,5 @@
+import socket
+
 class MessageLengthExceedsHeaderCapacity(Exception):
     pass
 
@@ -11,4 +13,12 @@ class CoreHandlerNotSpecified(Exception):
 
 
 class CallingMethodForNonConnectedClient(Exception):
+    pass
+
+
+class UnexpectedSocketError(socket.error):
+    pass
+
+
+class SocketNotReadyYetTryAgainException(socket.error):
     pass

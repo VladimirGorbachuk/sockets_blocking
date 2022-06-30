@@ -1,14 +1,18 @@
 from collections import deque
+from doctest import UnexpectedException
+from email.generator import Generator
 from logging import getLogger
 from socket import socket
 from typing import Any, Callable
+import errno
 import json
+from socket_frame.constants import HeaderTypeEnum
 
 from socket_frame.message_create import make_message
 
 from .header import get_message_length_from_header
 from .settings import TcpSettings
-from .exceptions import OnMessageEffectNotSet
+from .exceptions import OnMessageEffectNotSet, UnexpectedSocketError, SocketNotReadyYetTryAgainException
 
 
 logger = getLogger(__name__)
@@ -66,7 +70,12 @@ class Worker():
             self.on_message(msg)
     
     def get_next_message(self):
-        header = self._receive_defined_length(self.settings.HEADER_LENGTH)
+        if self.settings.HEADER_TYPE is HeaderTypeEnum.FIXED_LENGTH:
+            header = self._receive_defined_length(self, self.settings.HEADER_LENGTH)
+        elif self.settings.HEADER_TYPE is HeaderTypeEnum.DELIMITER_TERMINATED:
+            header = self._receive_until_termination_sequence()
+        else:
+            raise NotImplementedError
         logger.debug('got header: %s', header)
         msg_length = get_message_length_from_header(header, settings=self.settings)
         logger.debug('got msg_len: %s', msg_length)
@@ -85,9 +94,27 @@ class Worker():
         
         if len(collected) > length:
             if self._received_buffer:
-                # if buffer still contains chunks of next msgs
+                # if buffer still contains chunks of next msgs, e.g. this part was from buffer
                 self._received_buffer.appendleft(collected[length:])
             else:
                 self._received_buffer.append(collected[length:])
         return collected
-
+    
+    def _receive_until_termination_sequence(self):
+        collected = b''
+        termination_sequence_bytes = self.settings.HEADER_TERMINATION_SEQUENCE.encode(self.settings.MSG_FORMAT)
+        while termination_sequence_bytes not in collected:
+            if self._received_buffer:
+                collected += self._received_buffer.popleft()
+            else:
+                collected += self.conn.recv(self.settings.BYTES_CHUNK_SIZE)
+        
+        # we cannot be sure how many messages we have received (e.g. for ws-like we could have more than one)
+        required, remaining = collected.split(termination_sequence_bytes, 1)
+        if remaining:
+            if self._received_buffer:
+                # similar logic: we could take this from buffer, not from conn
+                self._received_buffer.appendleft(remaining)
+            else:
+                self._received_buffer.append(remaining)
+        return required
