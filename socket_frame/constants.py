@@ -9,3 +9,6 @@ class HeaderTypeEnum(Enum):
 class MessagePartsEnum(Enum):
     HEADER = 'header'
     PAYLOAD = 'payload'
+
+
+STOP_DAEMON_THREAD_EVENT_LOOP_TASK_STR = 'STOP'

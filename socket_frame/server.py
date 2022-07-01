@@ -7,6 +7,7 @@ import errno
 import queue
 import socket
 
+from .constants import STOP_DAEMON_THREAD_EVENT_LOOP_TASK_STR
 from .exceptions import CoreHandlerNotSpecified, SocketIsClosed, UnexpectedSocketError
 from .settings import TcpSettings
 from .worker import Worker, GeneratorWorker
@@ -39,7 +40,7 @@ class Server():
         except Exception as e:
             logger.exception('an unexpected ServerError has occured %s', e)
         finally:
-            self.server.shutdown(1)
+            self.server.shutdown(socket.SHUT_RDWR)
             self.server.close()
 
 
@@ -58,6 +59,15 @@ class NonBlockingSocketServer():
         self.daemon_thread = Thread(target = self._execute_event_loop_for_all_connections, daemon=True)
     
     def run(self):
+        try:
+            self._run()
+        finally:
+            self.server.shutdown(socket.SHUT_RDWR)
+            self.server.close()
+            self.active_tasks_queue.put(STOP_DAEMON_THREAD_EVENT_LOOP_TASK_STR)
+            self.daemon_thread.join()
+    
+    def _run(self):
         self._run_separate_thread_as_event_loop()
         self.server.listen()
         while True:
@@ -69,8 +79,8 @@ class NonBlockingSocketServer():
                 self.active_tasks_queue.put(task)
             except socket.timeout:
                 if conn:
+                    conn.shutdown(socket.SHUT_RDWR)
                     conn.close()
-                    conn.shutdown()
             except socket.error as e:
                 if e.args[0] in [errno.EWOULDBLOCK, errno.EAGAIN]:
                     pass
@@ -87,6 +97,8 @@ class NonBlockingSocketServer():
         while True:
             try:
                 alive_task = self.active_tasks_queue.get(block=False)
+                if alive_task == STOP_DAEMON_THREAD_EVENT_LOOP_TASK_STR:
+                    break
             except queue.Empty:
                 # FIXME: not sure what would be appropriate as a sleep value
                 sleep(0)
