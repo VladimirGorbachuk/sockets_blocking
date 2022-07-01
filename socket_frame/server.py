@@ -5,6 +5,7 @@ from threading import Thread
 from time import sleep
 import errno
 import queue
+import select
 import socket
 
 from .constants import STOP_DAEMON_THREAD_EVENT_LOOP_TASK_STR
@@ -60,6 +61,7 @@ class NonBlockingSocketServer():
     
     def run(self):
         try:
+            self._run_separate_thread_as_event_loop()
             self._run()
         finally:
             self.server.shutdown(socket.SHUT_RDWR)
@@ -68,7 +70,6 @@ class NonBlockingSocketServer():
             self.daemon_thread.join()
     
     def _run(self):
-        self._run_separate_thread_as_event_loop()
         self.server.listen()
         while True:
             conn = None
@@ -112,4 +113,54 @@ class NonBlockingSocketServer():
 
             # FIXME: not sure that it is correct to put zero sleep here need to ask is it set as env var or zero?
             sleep(0)
-        
+
+
+class SelectBasedServer(NonBlockingSocketServer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._conn_fileno_mapped_to_tasks = {}
+
+    def _run(self):
+        self.server.listen()
+        while True:
+            conn = None
+            readable_socket_list = [self.server]
+            writable_socket_list = []
+            # Get the list sockets which are readable
+            readable_socket_list, writeable_socket_list, error_sockets = select.select(
+                readable_socket_list, writable_socket_list, [])
+
+            for socket in readable_socket_list + writeable_socket_list:
+                conn, addr = socket.accept()
+                if conn.fileno() not in self._conn_fileno_mapped_to_tasks:
+                    worker = GeneratorWorker(conn, settings = self.settings)
+                    task = self.default_handler(worker, settings = self.settings)
+                    self._conn_fileno_mapped_to_tasks[conn.fileno()] = task
+                else:
+                    task = self._conn_fileno_mapped_to_tasks[conn.fileno()]
+                self.active_tasks_queue.put(task)
+            
+            for conn in error_sockets:
+                try:
+                    self._conn_fileno_mapped_to_tasks.pop(conn.fileno())
+                except KeyError:
+                    pass
+
+    def _execute_event_loop_for_all_connections(self):
+        while True:
+            try:
+                alive_task = self.active_tasks_queue.get(block=False)
+                if alive_task == STOP_DAEMON_THREAD_EVENT_LOOP_TASK_STR:
+                    break
+            except queue.Empty:
+                # FIXME: not sure what would be appropriate as a sleep value
+                sleep(0)
+                continue
+            try:
+                next(alive_task)
+            except SocketIsClosed:
+                # task is finished/dead - no need to keep it in event loop
+                logger.info('task finished, socket is closed now')
+
+            # FIXME: not sure that it is correct to put zero sleep here need to ask is it set as env var or zero?
+            sleep(0)
