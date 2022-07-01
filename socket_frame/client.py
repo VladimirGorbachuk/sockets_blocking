@@ -32,7 +32,11 @@ class Client(Worker):
         except Exception as e:
             logger.exception('unexpected error occured while connecting %s', e, stack_info = True)
         finally:
-            self.worker.disconnect()
+            if self.worker is not None:
+                self.worker.disconnect()
+            if self.conn is not None:
+                self.conn.shutdown(1)
+                self.conn.close()
             self.conn = None
             self.worker = None
 
