@@ -122,16 +122,25 @@ class SelectBasedServer(NonBlockingSocketServer):
 
     def _run(self):
         self.server.listen()
+
+        conn = None
+        readable_socket_list = [self.server]
+        writable_socket_list = []
         while True:
-            conn = None
-            readable_socket_list = [self.server]
-            writable_socket_list = []
             # Get the list sockets which are readable
+            if not readable_socket_list:
+                readable_socket_list.append(self.server)
             readable_socket_list, writeable_socket_list, error_sockets = select.select(
                 readable_socket_list, writable_socket_list, [])
 
+            new_writable_socket_list = []
             for socket in readable_socket_list + writeable_socket_list:
-                conn, addr = socket.accept()
+                if socket is self.server:
+                    conn, addr = socket.accept()
+                    new_writable_socket_list.append(conn)
+                else:
+                    conn = socket
+            
                 if conn.fileno() not in self._conn_fileno_mapped_to_tasks:
                     worker = GeneratorWorker(conn, settings = self.settings)
                     task = self.default_handler(worker, settings = self.settings)
@@ -139,7 +148,7 @@ class SelectBasedServer(NonBlockingSocketServer):
                 else:
                     task = self._conn_fileno_mapped_to_tasks[conn.fileno()]
                 self.active_tasks_queue.put(task)
-            
+            writable_socket_list = new_writable_socket_list
             for conn in error_sockets:
                 try:
                     self._conn_fileno_mapped_to_tasks.pop(conn.fileno())
