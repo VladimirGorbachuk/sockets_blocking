@@ -7,7 +7,7 @@ import errno
 import queue
 import socket
 
-from .exceptions import CoreHandlerNotSpecified, UnexpectedSocketError
+from .exceptions import CoreHandlerNotSpecified, SocketIsClosed, UnexpectedSocketError
 from .settings import TcpSettings
 from .worker import Worker, GeneratorWorker
 
@@ -30,10 +30,10 @@ class Server():
     def run(self):
         try:
             self.server.listen()
-            logger.debug("[LISTENING] Server is listening on %s", self.settings.SERVER_ADDRESS)
+            logger.debug("Server is listening on %s", self.settings.SERVER_ADDRESS)
             while True:
                 conn, addr = self.server.accept()
-                logger.info('listening to a new client')
+                logger.debug('Listening to a new client')
                 worker = Worker(conn, settings=self.settings)
                 self.workers_pool.apply_async(func=self.default_handler, args=(worker,), kwds={'settings': self.settings})
         except Exception as e:
@@ -57,32 +57,6 @@ class NonBlockingSocketServer():
         self.active_tasks_queue = Queue()
         self.daemon_thread = Thread(target = self._execute_event_loop_for_all_connections, daemon=True)
     
-    def _run_separate_thread_as_event_loop(self):
-        # FIXME: possibly need to call as a daemon thread (not sure of it yet)
-        self.daemon_thread.start()
-    
-    def _execute_event_loop_for_all_connections(self):
-
-        while True:
-            try:
-                print('at least maybe now we are here?')
-                alive_task = self.active_tasks_queue.get(block=False)
-                try:
-                    print('are we even going to try?')
-                    next(alive_task)
-                    self.active_tasks_queue.put(alive_task)
-                    print('this time we did not return it to queue?')
-                except GeneratorExit:
-                    print('it is finished')
-                    # task is finished/dead - no need to keep it in event loop
-                    logger.info('task finished')
-            except queue.Empty:
-                print('empty')
-                sleep(2)
-            # FIXME: not sure that it is correct to put zero sleep here need to ask is it set as env var or zero?
-            sleep(0)
-        
-    
     def run(self):
         self._run_separate_thread_as_event_loop()
         self.server.listen()
@@ -93,7 +67,6 @@ class NonBlockingSocketServer():
                 worker = GeneratorWorker(conn, settings = self.settings)
                 task = self.default_handler(worker, settings = self.settings) 
                 self.active_tasks_queue.put(task)
-                print('did we put it to the queue?')
             except socket.timeout:
                 if conn:
                     conn.close()
@@ -104,4 +77,27 @@ class NonBlockingSocketServer():
                 else:
                     #FIXME: not sure it is okay to ignore any socket error, at least need to keep logs
                     logger.exception(e, stack_info=True)
+
+    def _run_separate_thread_as_event_loop(self):
+        # FIXME: possibly need to call as a daemon thread (not sure of it yet)
+        self.daemon_thread.start()
     
+    def _execute_event_loop_for_all_connections(self):
+
+        while True:
+            try:
+                alive_task = self.active_tasks_queue.get(block=False)
+            except queue.Empty:
+                # FIXME: not sure what would be appropriate as a sleep value
+                sleep(0)
+                continue
+            try:
+                next(alive_task)
+                self.active_tasks_queue.put(alive_task)
+            except SocketIsClosed:
+                # task is finished/dead - no need to keep it in event loop
+                logger.info('task finished, socket is closed now')
+
+            # FIXME: not sure that it is correct to put zero sleep here need to ask is it set as env var or zero?
+            sleep(0)
+        

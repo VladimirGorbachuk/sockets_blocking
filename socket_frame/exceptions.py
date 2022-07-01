@@ -22,3 +22,7 @@ class UnexpectedSocketError(socket.error):
 
 class SocketNotReadyYetTryAgainException(socket.error):
     pass
+
+
+class SocketIsClosed(Exception):
+    pass

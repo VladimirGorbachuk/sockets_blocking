@@ -1,16 +1,17 @@
 from collections import deque
 from email.generator import Generator
 from logging import getLogger
-from socket import socket
+
 from typing import Any, Callable, Optional
 import errno
 import json
+import socket
 
 from .constants import HeaderTypeEnum, MessagePartsEnum
 from .message_create import make_message
 from .header import get_message_length_from_header
 from .settings import TcpSettings
-from .exceptions import OnMessageEffectNotSet, UnexpectedSocketError, SocketNotReadyYetTryAgainException
+from .exceptions import OnMessageEffectNotSet, UnexpectedSocketError, SocketNotReadyYetTryAgainException, SocketIsClosed
 
 
 logger = getLogger(__name__)
@@ -174,7 +175,6 @@ class GeneratorWorker():
             yield from self._on_message(msg)
 
     def set_on_connect(self, effect_from_handler: Callable) -> None:
-        print('we call this????')
         self._on_connect = effect_from_handler
 
     def set_on_message(self, effect_from_handler: Generator) -> None:
@@ -189,7 +189,6 @@ class GeneratorWorker():
         if self._on_connect is not None:
             yield from self.on_connect()
         while True:
-            print('still here?')
             try:
                 yield from self.get_next_message()
                 yield from self.on_message(self._current_parsed_message)
@@ -248,7 +247,13 @@ class GeneratorWorker():
                 collected += self._received_buffer.popleft()
             else:
                 try:
-                    collected += self.conn.recv(self.settings.BYTES_CHUNK_SIZE)
+                    added_part = self.conn.recv(self.settings.BYTES_CHUNK_SIZE)
+                    if not added_part:
+                        self.conn.shutdown(1)
+                        self.conn.close()
+                        raise SocketIsClosed
+                    else:
+                        collected += added_part
                 except socket.error as e:
                     if e.args[0] == errno.EWOULDBLOCK:
                         yield
@@ -257,6 +262,7 @@ class GeneratorWorker():
         
         # we cannot be sure how many messages we have received (e.g. for ws-like we could have more than one)
         required, remaining = collected.split(termination_sequence_bytes, 1)
+        
         if remaining:
             if self._received_buffer:
                 # similar logic: we could take this from buffer, not from conn
