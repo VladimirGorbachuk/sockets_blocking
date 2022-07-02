@@ -134,19 +134,22 @@ class SelectBasedServer(NonBlockingSocketServer):
                 readable_socket_list, writable_socket_list, [])
 
             new_writable_socket_list = []
+            # FIXME: separate as generator?
             for socket in readable_socket_list + writeable_socket_list:
                 if socket is self.server:
                     conn, addr = socket.accept()
                     new_writable_socket_list.append(conn)
                 else:
                     conn = socket
-            
+                
+                # FIXME: need to make separate method
                 if conn.fileno() not in self._conn_fileno_mapped_to_tasks:
                     worker = GeneratorWorker(conn, settings = self.settings)
                     task = self.default_handler(worker, settings = self.settings)
                     self._conn_fileno_mapped_to_tasks[conn.fileno()] = task
                 else:
                     task = self._conn_fileno_mapped_to_tasks[conn.fileno()]
+                # FIXME: here we have a problem need to check that active task and socket state coincide
                 self.active_tasks_queue.put(task)
             writable_socket_list = new_writable_socket_list
             for conn in error_sockets:

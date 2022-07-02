@@ -7,7 +7,7 @@ import errno
 import json
 import socket
 
-from .constants import HeaderTypeEnum, MessagePartsEnum
+from .constants import CurrentOperationEnum, HeaderTypeEnum, MessagePartsEnum
 from .message_create import make_message
 from .header import get_message_length_from_header
 from .settings import TcpSettings
@@ -139,6 +139,7 @@ class GeneratorWorker():
         self._current_header: Optional[bytes] = None
         self._current_message: Optional[bytes] = None
         self.current_parsed_message: Optional[Any] = None
+        self.current_operation = CurrentOperationEnum.NO_OPERATION
     
     def get_message_and_clear(self):
         self._current_header = None
@@ -148,6 +149,7 @@ class GeneratorWorker():
         return msg_to_return
 
     def send_message(self, msg):
+        self.current_operation = CurrentOperationEnum.WRITING
         '''method which can be called only by related handler'''
         length_sent = 0
         message_to_send = make_message(msg, self.settings)
@@ -196,6 +198,7 @@ class GeneratorWorker():
                 self.disconnect()
     
     def get_next_message(self):
+        self.current_operation = CurrentOperationEnum.READING
         self._current_header = None
         self._current_message = None
         if self.settings.HEADER_TYPE is HeaderTypeEnum.FIXED_LENGTH:

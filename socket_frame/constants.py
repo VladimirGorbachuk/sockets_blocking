@@ -11,4 +11,10 @@ class MessagePartsEnum(Enum):
     PAYLOAD = 'payload'
 
 
+class CurrentOperationEnum(Enum):
+    NO_OPERATION = 'no_operation'
+    WRITING = 'writing'
+    READING = 'reading'
+
+
 STOP_DAEMON_THREAD_EVENT_LOOP_TASK_STR = 'STOP'
